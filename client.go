@@ -8,6 +8,7 @@ import (
 
 func main() {
     res, err := http.Get("http://localhost:8080/test")
+    //res, err := http.Get("http://gmail.com")
     if err != nil {
         fmt.Println(err)
         return;
