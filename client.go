@@ -1,24 +1,21 @@
 package main
 
 import (
-    "net"
+    "net/http"
+    "io/ioutil"
     "fmt"
-    "bufio"
 )
 
 func main() {
-    // connect to localhost:8080
-    conn, err := net.Dial("tcp", "localhost:8080")
+    res, err := http.Get("http://localhost:8080/test")
     if err != nil {
+        fmt.Println(err)
         return;
     }
-    // send a message
-    fmt.Fprintf(conn, "The client is sending a message!\n")
-
-    // and print the response
-    status, err := bufio.NewReader(conn).ReadString('\n')
+    body, err := ioutil.ReadAll(res.Body)
     if err != nil {
-        return
+        fmt.Println(err)
+        return;
     }
-    fmt.Printf(status)
+    fmt.Printf(string(body))
 }

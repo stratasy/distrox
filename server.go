@@ -1,34 +1,17 @@
 package main
 
 import (
-    "net"
-    "bufio"
+    "net/http"
     "fmt"
 )
 
-func handleConnection(conn net.Conn) {
-    message, err := bufio.NewReader(conn).ReadString('\n')
-    if err != nil {
-        return
+func Test(w http.ResponseWriter, r *http.Request) {
+    if r.Method == "GET"{
+        fmt.Fprintf(w, "Received GET request!\n")
     }
-    conn.Write([]byte(fmt.Sprintf("Message got: %s\n", message)))
 }
 
 func main() {
-    // startup server on localhost:8080
-    ln, err := net.Listen("tcp", ":8080")
-    if err != nil {
-        return;
-    }
-    // infinite loop
-    for {
-        // wait for clients to connect
-	conn, err := ln.Accept()
-	if err != nil {
-            return;
-	}
-
-        // and when one connects, asynchronously go send a response
-	go handleConnection(conn)
-    }
+    http.HandleFunc("/test", Test)
+    http.ListenAndServe(":8080", nil)
 }
