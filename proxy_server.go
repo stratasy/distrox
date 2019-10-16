@@ -17,7 +17,7 @@ func Redir(w http.ResponseWriter, r *http.Request) {
     new_request, err := http.NewRequest(r.Method, request_path, r.Body)
 
     // send request to server
-    fmt.Printf("Sending HTTP request to %s\n", request_path)
+    fmt.Printf("Sending HTTP %s request to %s\n", r.Method, request_path)
 
     client := &http.Client{}
     res, err := client.Do(new_request)
