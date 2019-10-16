@@ -5,7 +5,6 @@ import (
     "io/ioutil"
     "fmt"
     "strings"
-    "bytes"
 )
 
 func Redir(w http.ResponseWriter, r *http.Request) {
@@ -14,14 +13,8 @@ func Redir(w http.ResponseWriter, r *http.Request) {
     // append http://
     request_path = fmt.Sprintf("http://%s", request_path)
 
-    orig_body, err := ioutil.ReadAll(r.Body)
-    if err != nil {
-        fmt.Println(err)
-        return
-    }
-
     // create new HTTP request with the target URL (everything else is the same)
-    new_request, err := http.NewRequest(r.Method, request_path, bytes.NewReader(orig_body))
+    new_request, err := http.NewRequest(r.Method, request_path, r.Body)
 
     // send request to server
     fmt.Printf("Sending HTTP request to %s\n", request_path)
