@@ -4,35 +4,35 @@ import (
     "net/http"
     "io/ioutil"
     "fmt"
+    "strings"
 )
 
 func Redir(w http.ResponseWriter, r *http.Request) {
-    if r.Method == "GET"{
-        res, err := http.Get("https://www.bing.com/")
+    if r.Method == "GET" {
+        // filter: /proxy/www.google.com -> www.google.com
+        request_path := strings.TrimPrefix(r.URL.Path, "/proxy/")
+        // append http://
+        request_path = fmt.Sprintf("http://%s", request_path)
+
+        // send request to server
+        fmt.Printf("Sending HTTP request to %s\n", request_path)
+        res, err := http.Get(request_path)
         if err != nil {
             fmt.Println(err)
+            return;
         }
-	    body, err := ioutil.ReadAll(res.Body)
-	    if err != nil {
-	        fmt.Println(err)
-	        return;
-	    }
-        
-        fmt.Fprintf(w, string(body))
-        fmt.Fprintf(w, "\nWould you like to make this your default browser?\n")
-    }
-}
 
-func Default(w http.ResponseWriter, r *http.Request) {
-    if r.Method == "GET"{
-        fmt.Fprintf(w, "Received default request!\n")
+        // forward response to client
+        body, err := ioutil.ReadAll(res.Body)
+        if err != nil {
+            fmt.Println(err)
+            return;
+        }
+        fmt.Fprintf(w, string(body))
     }
-    
 }
 
 func main() {
-    http.HandleFunc("/www.google.com", Redir)
-    http.HandleFunc("/", Default)
-    //http.HandleFunc("/", TestBase)
+    http.HandleFunc("/proxy/", Redir)
     http.ListenAndServe(":8080", nil)
 }
