@@ -8,7 +8,7 @@ import (
 
 func main() {
     s := "www.gmail.com"
-    res, err := http.Get(fmt.Sprintf("http://localhost:8080/proxy/%s", s))
+    res, err := http.Post(fmt.Sprintf("http://localhost:8080/proxy/%s", s), "application/json", nil)
     if err != nil {
         fmt.Println(err)
         return;
