@@ -3,6 +3,7 @@ package main
 import (
     "net/http"
     "io"
+    //"io/ioutil"
     "fmt"
     "os"
     "bufio"
@@ -53,8 +54,8 @@ func (p *Proxy) HandleRequest(w http.ResponseWriter, r *http.Request) {
     }
 
     // format new request
-    request_path := fmt.Sprintf("%s://%s%s", r.URL.Scheme, r.URL.Host, r.URL.Path)
-
+    // Hardcoded to google, since input seems to be incorrectly parsed currently.
+    request_path := "https://google.com"//fmt.Sprintf("%s://%s%s", r.URL.Scheme, r.URL.Host, r.URL.Path)
     // create new HTTP request with the target URL (everything else is the same)
     new_request, err := http.NewRequest(r.Method, request_path, r.Body)
 
@@ -67,7 +68,7 @@ func (p *Proxy) HandleRequest(w http.ResponseWriter, r *http.Request) {
     }
     defer res.Body.Close()
 
-    // copy the headers over to the ResponseWriter. 
+    // copy the headers over to the ResponseWriter.
     //res.Header is a map of string -> slice (string)
     for key, slice := range res.Header {
         for _, val := range slice {
@@ -81,6 +82,7 @@ func (p *Proxy) HandleRequest(w http.ResponseWriter, r *http.Request) {
         log.Panic(err)
     }
 }
+
 
 func main() {
 
