@@ -6,6 +6,7 @@ import (
     "fmt"
     "os"
     "bufio"
+    "log"
 )
 
 type Proxy struct {
@@ -22,8 +23,7 @@ func CreateProxy() *Proxy {
 func (p *Proxy) ReadConfig (path string) {
     file, err := os.Open(path)
     if err != nil {
-        fmt.Println(err)
-        return
+        log.Fatal(err)
     }
     defer file.Close()
 
@@ -44,7 +44,7 @@ func (p *Proxy) HandleRequest(w http.ResponseWriter, r *http.Request) {
     // check if this site is blocked
     _, blocked := p.BlockedSites[r.URL.Host]
     if blocked {
-        fmt.Fprint(w, "Page blocked!")
+        log.Println("Blocked site!")
         return
     }
 
@@ -55,12 +55,11 @@ func (p *Proxy) HandleRequest(w http.ResponseWriter, r *http.Request) {
     new_request, err := http.NewRequest(r.Method, request_path, r.Body)
 
     // send request to server
-    fmt.Printf("Sending %s request to %s\n", r.Method, request_path)
+    log.Printf("Sending %s request to %s\n", r.Method, request_path)
     client := &http.Client{}
     res, err := client.Do(new_request)
     if err != nil {
-        fmt.Println(err)
-        return
+        log.Panic(err)
     }
     defer res.Body.Close()
 
@@ -75,8 +74,7 @@ func (p *Proxy) HandleRequest(w http.ResponseWriter, r *http.Request) {
     // forward response to client
     _, err = io.Copy(w, res.Body)
     if err != nil {
-        fmt.Println(err)
-        return
+        log.Panic(err)
     }
 }
 
