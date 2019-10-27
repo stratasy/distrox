@@ -7,16 +7,19 @@ import (
     "os"
     "bufio"
     "log"
+    "strconv"
 )
 
 type Proxy struct {
     // use a map for constant time lookup
     BlockedSites map[string]string
+    port int
 }
 
-func CreateProxy() *Proxy {
+func CreateProxy(port int) *Proxy {
     rv := new(Proxy)
     rv.BlockedSites = make(map[string]string)
+    rv.port = port
     return rv
 }
 
@@ -36,7 +39,8 @@ func (p *Proxy) ReadConfig (path string) {
 
 func (p *Proxy) StartServer() {
     http.HandleFunc("/", p.HandleRequest)
-    http.ListenAndServe(":8080", nil)
+    port := fmt.Sprintf(":%d", p.port)
+    http.ListenAndServe(port, nil)
 }
 
 func (p *Proxy) HandleRequest(w http.ResponseWriter, r *http.Request) {
@@ -79,7 +83,20 @@ func (p *Proxy) HandleRequest(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-    p := CreateProxy()
+
+    args := os.Args
+    if len(args) != 2 {
+        fmt.Println("Arguments: [port]")
+        return
+    }
+
+    port, err := strconv.Atoi(args[1])
+    if err != nil {
+        fmt.Println("[port] must be an integer!")
+        return
+    }
+
+    p := CreateProxy(port)
     p.ReadConfig("blocked_sites.txt")
     p.StartServer()
 }
