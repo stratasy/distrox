@@ -8,6 +8,8 @@ import (
     "os"
     "hash/fnv"
     "bufio"
+    "time"
+    "encoding/json"
 )
 
 type NodeInfo struct {
@@ -23,6 +25,35 @@ type RMulticastConnection struct {
     peer_urls []string
 
     last_message_hash uint32
+}
+
+type Message struct {
+    Timestamp time.Time
+    Data []byte
+    SenderId int
+}
+
+func CreateMessage(message []byte, sender_id int) Message {
+    rv := Message{
+        Timestamp:  time.Now(),
+        SenderId: sender_id,
+        Data: message,
+    }
+    return rv
+}
+
+func MessageToByteSlice(message Message) []byte {
+    b, err := json.Marshal(message)
+    if err != nil {
+        log.Fatal(err)
+    }
+    return b
+}
+
+func ByteSliceToMessage(input []byte) Message {
+    rv := Message{}
+    json.Unmarshal(input, &rv)
+    return rv
 }
 
 func InitConnection(nodes []NodeInfo, host string, port int) *RMulticastConnection {
@@ -54,12 +85,13 @@ func InitConnection(nodes []NodeInfo, host string, port int) *RMulticastConnecti
 
 func HandleRequest(buf []byte, rm_conn *RMulticastConnection) {
 
+    message := ByteSliceToMessage(buf)
     hash_val := HashByteSlice(buf)
 
     // new message that we haven't received yet!
-    if hash_val != rm_conn.last_message_hash {
+    if hash_val != rm_conn.last_message_hash && message.SenderId != rm_conn.id {
         rm_conn.last_message_hash = hash_val
-        println(string(buf))
+        println(string(message.Data))
         rm_conn.Multicast(buf)
     }
 }
@@ -71,11 +103,12 @@ func HandleRequests(rm_conn *RMulticastConnection) {
         if err != nil {
             log.Fatal(err.Error())
         }
-        buf := make([]byte, 1024)
-        _, err = conn.Read(buf)
+        buf := make([]byte, 4096)
+        n, err := conn.Read(buf)
         if err != nil {
 	    log.Fatal(err.Error())
         }
+        buf = buf[:n]
 	go HandleRequest(buf, rm_conn)
         conn.Close()
     }
@@ -116,6 +149,7 @@ func main() {
 	Host: "localhost",
 	Port: 8081,
     }
+    /*
     n3 := NodeInfo {
 	Host: "localhost",
 	Port: 8082,
@@ -124,20 +158,21 @@ func main() {
 	Host: "localhost",
 	Port: 8083,
     }
+    */
 
     port, _ := strconv.Atoi(os.Args[1])
 
-    nodes := []NodeInfo{n1, n2, n3, n4}
+    nodes := []NodeInfo{n1, n2}
     rm_conn := InitConnection(nodes, "localhost", port)
 
     defer rm_conn.CloseConnection()
-
     go HandleRequests(rm_conn)
 
     scanner := bufio.NewScanner(os.Stdin)
     for scanner.Scan() {
         line := scanner.Text()
-        fmt.Printf("Sending: %s\n", line)
-        rm_conn.Multicast([]byte(line))
+        msg := CreateMessage([]byte(line), rm_conn.id)
+        bytes := MessageToByteSlice(msg)
+        rm_conn.Multicast(bytes)
     }
 }
