@@ -3,36 +3,41 @@ package main
 import (
     "net/http"
     "io"
+    "io/ioutil"
     "fmt"
     "os"
     "bufio"
     "log"
+    "encoding/json"
     "strconv"
-    "time"
 )
 
+type Config struct {
+    LeaderId int `json:"leader_id"`
+    BlockedSitesPath string `json:"blocked_sites_path"`
+    Nodes []*NodeInfo `json:"nodes"`
+}
+
 type NodeInfo struct {
-    Host string
-    Port int
+    Host string `json:"host"`
+    Port int `"json:"port"`
     Url string
-    Id int
+    Id int `"json:"id"`
     IsLeader bool
 }
 
 type ProxyNode struct {
     // use a map for constant time lookup
     BlockedSites map[string]string
-    Info NodeInfo
-    PeerInfo []NodeInfo
+    // info about this node
+    Info *NodeInfo
+    // info about the other nodes
+    PeerInfo []*NodeInfo
+    // used for the round-robin selection if this node is the leader
+    SendingPeerIdx int
 }
 
-type Message struct {
-    Timestamp int64
-    Data []byte
-    SenderId int
-}
-
-func CreateProxyNode(nodes []NodeInfo, id int) *ProxyNode {
+func CreateProxyNode(nodes []*NodeInfo, id int) *ProxyNode {
     rv := new(ProxyNode)
     rv.BlockedSites = make(map[string]string)
 
@@ -44,10 +49,34 @@ func CreateProxyNode(nodes []NodeInfo, id int) *ProxyNode {
         }
     }
 
+    rv.SendingPeerIdx = 0
     return rv
 }
 
-func (p *ProxyNode) ReadConfig (path string) {
+func ReadConfig (path string) Config {
+    var config Config
+    file, err := ioutil.ReadFile(path)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    err = json.Unmarshal([]byte(file), &config)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    for _, node := range config.Nodes {
+        node.Url = fmt.Sprintf("%s:%d", node.Host, node.Port)
+        if node.Id == config.LeaderId {
+            node.IsLeader = true
+        } else {
+            node.IsLeader = false
+        }
+    }
+    return config
+}
+
+func (p *ProxyNode) ReadBlockedSites (path string) {
     file, err := os.Open(path)
     if err != nil {
         log.Fatal(err)
@@ -68,26 +97,54 @@ func (p *ProxyNode) StartServer() {
     log.Fatal(http.ListenAndServe(port, nil))
 }
 
+func (p *ProxyNode) ForwardRequest(w http.ResponseWriter, r *http.Request, peer_id int) bool {
+    // default to ourselves
+    url := p.Info.Url
+
+    if peer_id != -1 {
+        // figure out which node to send it to (round robin for now)
+        url = p.PeerInfo[peer_id].Url
+
+    }
+
+    // make a copy of the request and send it to the corresponding child
+    request_path := fmt.Sprintf("http://%s/proxy%s", url, r.URL.Path)
+    new_request, err := http.NewRequest(r.Method, request_path, r.Body)
+    new_request.Header = r.Header
+    new_request.Host = r.Host
+    client := &http.Client{}
+
+    // copy back the response from the child
+    res, err := client.Do(new_request)
+    if err != nil {
+        // couldn't connect to the child :(
+        return false
+    }
+    for key, slice := range res.Header {
+        for _, val := range slice {
+            w.Header().Add(key, val)
+        }
+    }
+    io.Copy(w, res.Body)
+    return true
+}
+
 func (p *ProxyNode) HandleRequest(w http.ResponseWriter, r *http.Request) {
 
-    // forward request to the "child" node on port 8081
+    // if we are the leader, forward the response to a child node!
     if (p.Info.IsLeader) {
-        request_path := fmt.Sprintf("http://localhost:8081/proxy/%s", r.URL.Path)
-        new_request, err := http.NewRequest(r.Method, request_path, r.Body)
-        new_request.Header = r.Header
-        new_request.Host = r.Host
-        client := &http.Client{}
-        res, err := client.Do(new_request)
-        for err != nil {
-            log.Fatal(err)
-            time.Sleep(1 * time.Second)
-        }
-        for key, slice := range res.Header {
-            for _, val := range slice {
-                w.Header().Add(key, val)
+
+        // try forwarding the response a child node
+        for i := 0; i<len(p.PeerInfo); i++ {
+            if p.ForwardRequest(w, r, p.SendingPeerIdx) {
+                return
             }
+            // update the round-robin counter
+            p.SendingPeerIdx = (p.SendingPeerIdx + 1) % len(p.PeerInfo)
         }
-        _, err = io.Copy(w, res.Body)
+
+        // if we reach here, we were unable to connect to any child nodes, so we'll just send the request ourselves
+        p.ForwardRequest(w, r, -1)
     }
 }
 
@@ -132,38 +189,23 @@ func (p *ProxyNode) HandleProxyRequest(w http.ResponseWriter, r *http.Request) {
 
 
 func main() {
+    // setup logger
     log.SetFlags(log.LstdFlags | log.Lshortfile)
 
     args := os.Args
-    if len(args) != 2 {
-        fmt.Println("Arguments: [port]")
+    if len(args) != 3 {
+        fmt.Println("Arguments: [config] [id - has to match the \"id\" in the config file]")
         return
     }
 
-    port, err := strconv.Atoi(args[1])
+    config := ReadConfig(args[1])
+
+    id, err := strconv.Atoi(args[2])
     if err != nil {
-        fmt.Println("[port] must be an integer!")
-        return
+        log.Fatal(err)
     }
 
-    n1 := NodeInfo {
-        Host: "localhost",
-        Port: 8080,
-        Url: "localhost:8080",
-        Id: 8080,
-        IsLeader: true,
-    }
-    n2 := NodeInfo {
-        Host: "localhost",
-        Port: 8081,
-        Url: "localhost:8081",
-        Id: 8081,
-        IsLeader: false,
-    }
-
-    nodes := []NodeInfo{n1, n2}
-
-    p := CreateProxyNode(nodes, port)
-    p.ReadConfig("blocked_sites.txt")
+    p := CreateProxyNode(config.Nodes, id)
+    p.ReadBlockedSites(config.BlockedSitesPath)
     p.StartServer()
 }
