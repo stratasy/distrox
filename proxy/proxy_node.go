@@ -1,4 +1,4 @@
-package main
+package proxy
 
 import (
     "net/http"
@@ -9,33 +9,7 @@ import (
     "bufio"
     "log"
     "encoding/json"
-    "strconv"
 )
-
-type Config struct {
-    LeaderId int `json:"leader_id"`
-    BlockedSitesPath string `json:"blocked_sites_path"`
-    Nodes []*NodeInfo `json:"nodes"`
-}
-
-type NodeInfo struct {
-    Host string `json:"host"`
-    Port int `"json:"port"`
-    Url string
-    Id int `"json:"id"`
-    IsLeader bool
-}
-
-type ProxyNode struct {
-    // use a map for constant time lookup
-    BlockedSites map[string]string
-    // info about this node
-    Info *NodeInfo
-    // info about the other nodes
-    PeerInfo []*NodeInfo
-    // used for the round-robin selection if this node is the leader
-    SendingPeerIdx int
-}
 
 func CreateProxyNode(nodes []*NodeInfo, id int) *ProxyNode {
     rv := new(ProxyNode)
@@ -53,8 +27,8 @@ func CreateProxyNode(nodes []*NodeInfo, id int) *ProxyNode {
     return rv
 }
 
-func ReadConfig (path string) Config {
-    var config Config
+func ReadConfig (path string) ProxyConfig {
+    var config ProxyConfig
     file, err := ioutil.ReadFile(path)
     if err != nil {
         log.Fatal(err)
@@ -137,6 +111,7 @@ func (p *ProxyNode) HandleRequest(w http.ResponseWriter, r *http.Request) {
         // try forwarding the response a child node
         for i := 0; i<len(p.PeerInfo); i++ {
             if p.ForwardRequest(w, r, p.SendingPeerIdx) {
+                p.SendingPeerIdx = (p.SendingPeerIdx + 1) % len(p.PeerInfo)
                 return
             }
             // update the round-robin counter
@@ -188,6 +163,7 @@ func (p *ProxyNode) HandleProxyRequest(w http.ResponseWriter, r *http.Request) {
 }
 
 
+/*
 func main() {
     // setup logger
     log.SetFlags(log.LstdFlags | log.Lshortfile)
@@ -209,3 +185,4 @@ func main() {
     p.ReadBlockedSites(config.BlockedSitesPath)
     p.StartServer()
 }
+*/

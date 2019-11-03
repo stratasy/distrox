@@ -149,7 +149,6 @@ func main() {
 	Host: "localhost",
 	Port: 8081,
     }
-    /*
     n3 := NodeInfo {
 	Host: "localhost",
 	Port: 8082,
@@ -158,11 +157,10 @@ func main() {
 	Host: "localhost",
 	Port: 8083,
     }
-    */
 
     port, _ := strconv.Atoi(os.Args[1])
 
-    nodes := []NodeInfo{n1, n2}
+    nodes := []NodeInfo{n1, n2, n3, n4}
     rm_conn := InitConnection(nodes, "localhost", port)
 
     defer rm_conn.CloseConnection()
