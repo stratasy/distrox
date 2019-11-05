@@ -9,7 +9,30 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 )
+
+type ProxyConfig struct {
+	LeaderId         int         `json:"leader_id"`
+	BlockedSitesPath string      `json:"blocked_sites_path"`
+	Nodes            []*NodeInfo `json:"nodes"`
+}
+
+type NodeInfo struct {
+	Host     string `json:"host"`
+	Port     int    `"json:"port"`
+	Url      string
+	Id       int `"json:"id"`
+	IsLeader bool
+}
+
+type ProxyNode struct {
+	BlockedSites   map[string]string
+	Info           *NodeInfo
+	PeerInfo       []*NodeInfo
+	SendingPeerIdx int
+	Cache          *LocalCache
+}
 
 func CreateProxyNode(nodes []*NodeInfo, id int) *ProxyNode {
 	rv := new(ProxyNode)
@@ -24,6 +47,7 @@ func CreateProxyNode(nodes []*NodeInfo, id int) *ProxyNode {
 	}
 
 	rv.SendingPeerIdx = 0
+	rv.Cache = CreateLocalCache()
 	return rv
 }
 
@@ -78,7 +102,6 @@ func (p *ProxyNode) ForwardRequest(w http.ResponseWriter, r *http.Request, peer_
 	if peer_id != -1 {
 		// figure out which node to send it to (round robin for now)
 		url = p.PeerInfo[peer_id].Url
-
 	}
 
 	// make a copy of the request and send it to the corresponding child
@@ -100,6 +123,7 @@ func (p *ProxyNode) ForwardRequest(w http.ResponseWriter, r *http.Request, peer_
 		}
 	}
 	io.Copy(w, res.Body)
+	p.Cache.CacheSet(*r.URL, res, time.Duration(5.0))
 	return true
 }
 
@@ -107,6 +131,18 @@ func (p *ProxyNode) HandleRequest(w http.ResponseWriter, r *http.Request) {
 
 	// if we are the leader, forward the response to a child node!
 	if p.Info.IsLeader {
+
+		res := p.Cache.CacheGet(*r.URL)
+		if res != nil {
+			log.Printf("Cached request: %s\n", r.URL.Host)
+			for key, slice := range res.Header {
+				for _, val := range slice {
+					w.Header().Add(key, val)
+				}
+			}
+			io.Copy(w, res.Body)
+			return
+		}
 
 		// try forwarding the response a child node
 		for i := 0; i < len(p.PeerInfo); i++ {
@@ -161,27 +197,3 @@ func (p *ProxyNode) HandleProxyRequest(w http.ResponseWriter, r *http.Request) {
 		log.Panic(err)
 	}
 }
-
-/*
-func main() {
-    // setup logger
-    log.SetFlags(log.LstdFlags | log.Lshortfile)
-
-    args := os.Args
-    if len(args) != 3 {
-        fmt.Println("Arguments: [config] [id - has to match the \"id\" in the config file]")
-        return
-    }
-
-    config := ReadConfig(args[1])
-
-    id, err := strconv.Atoi(args[2])
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    p := CreateProxyNode(config.Nodes, id)
-    p.ReadBlockedSites(config.BlockedSitesPath)
-    p.StartServer()
-}
-*/
