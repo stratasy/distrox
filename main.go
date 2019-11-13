@@ -1,31 +1,45 @@
 package main
 
 import (
-	"fmt"
-	"github.com/drp6/distrox/proxy"
-	"log"
-	"os"
-	"strconv"
+    "github.com/drp6/distrox/proxy"
+    "log"
+    "os"
+    "strconv"
+    "bufio"
+    "strings"
 )
 
 func main() {
-	// setup logger
-	log.SetFlags(log.LstdFlags | log.Lshortfile)
+    // setup logger
+    log.SetFlags(log.LstdFlags | log.Lshortfile)
 
-	args := os.Args
-	if len(args) != 3 {
-		fmt.Println("Arguments: [config] [id - has to match the \"id\" in the config file]")
-		return
+    args := os.Args
+    host := args[1]
+    port, err := strconv.Atoi(args[2])
+    if err != nil {
+	log.Fatal(err)
+    }
+    is_leader, err := strconv.ParseBool(args[3])
+    if err != nil {
+	log.Fatal(err)
+    }
+
+    p := proxy.CreateProxyNode(host, port, is_leader)
+    go p.HandleRequests()
+
+    scanner := bufio.NewScanner(os.Stdin)
+    for scanner.Scan() {
+	line := scanner.Text()
+	tokens := strings.Split(line, " ")
+	if tokens[0] == "connect" {
+	    message := p.Info.Url
+	    msg := proxy.CreateMessage([]byte(message), p.Info.Url, proxy.JOIN_REQUEST_MESSAGE)
+	    bytes := proxy.MessageToBytes(msg)
+	    p.Unicast(bytes, tokens[1])
+	} else {
+	    msg := proxy.CreateMessage([]byte(line), p.Info.Url, proxy.UNICAST_MESSAGE)
+	    bytes := proxy.MessageToBytes(msg)
+	    p.Multicast(bytes)
 	}
-
-	config := proxy.ReadConfig(args[1])
-
-	id, err := strconv.Atoi(args[2])
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	p := proxy.CreateProxyNode(config.Nodes, id)
-	p.ReadBlockedSites(config.BlockedSitesPath)
-	p.StartServer()
+    }
 }

@@ -1,199 +1,208 @@
 package proxy
 
 import (
-	"bufio"
-	"encoding/json"
-	"fmt"
-	"io"
-	"io/ioutil"
-	"log"
-	"net/http"
-	"os"
-	"time"
+    "bufio"
+    "encoding/json"
+    "fmt"
+    "io/ioutil"
+    "log"
+    "os"
+    "bytes"
+    "io"
+    "strings"
+    "strconv"
+    "net"
 )
 
 type ProxyConfig struct {
-	LeaderId         int         `json:"leader_id"`
-	BlockedSitesPath string      `json:"blocked_sites_path"`
-	Nodes            []*NodeInfo `json:"nodes"`
+    LeaderId         int         `json:"leader_id"`
+    BlockedSitesPath string      `json:"blocked_sites_path"`
+    Nodes            []*NodeInfo `json:"nodes"`
 }
 
 type NodeInfo struct {
-	Host     string `json:"host"`
-	Port     int    `"json:"port"`
-	Url      string
-	Id       int `"json:"id"`
-	IsLeader bool
+    Host     string `json:"host"`
+    Port     int    `"json:"port"`
+    Url      string
+    IsLeader bool
 }
 
 type ProxyNode struct {
-	BlockedSites   map[string]string
-	Info           *NodeInfo
-	PeerInfo       []*NodeInfo
-	SendingPeerIdx int
-	Cache          *LocalCache
+    BlockedSites   map[string]string
+    Info           *NodeInfo
+    PeerInfo       []*NodeInfo
+    SendingPeerIdx int
+    //Cache          *LocalCache
+    Messenger *TCPMessenger
 }
 
-func CreateProxyNode(nodes []*NodeInfo, id int) *ProxyNode {
-	rv := new(ProxyNode)
-	rv.BlockedSites = make(map[string]string)
+func CreateProxyNode(host string, port int, leader bool) *ProxyNode {
+    rv := &ProxyNode{}
+    rv.BlockedSites = make(map[string]string)
 
-	for _, node_info := range nodes {
-		if id == node_info.Id {
-			rv.Info = node_info
-		} else {
-			rv.PeerInfo = append(rv.PeerInfo, node_info)
-		}
-	}
+    rv.SendingPeerIdx = 0
+    rv.Info = CreateNodeInfo(host, port, leader)
+    rv.Messenger = InitTCPMessenger(rv.Info.Url)
+    return rv
+}
 
-	rv.SendingPeerIdx = 0
-	rv.Cache = CreateLocalCache()
-	return rv
+func CreateNodeInfo(host string, port int, leader bool) *NodeInfo {
+    rv := &NodeInfo{}
+    rv.Host = host
+    rv.Port = port
+    rv.Url = fmt.Sprintf("%s:%d", host, port)
+    rv.IsLeader = leader
+    return rv
 }
 
 func ReadConfig(path string) ProxyConfig {
-	var config ProxyConfig
-	file, err := ioutil.ReadFile(path)
-	if err != nil {
-		log.Fatal(err)
-	}
+    var config ProxyConfig
+    file, err := ioutil.ReadFile(path)
+    if err != nil {
+	log.Fatal(err)
+    }
 
-	err = json.Unmarshal([]byte(file), &config)
-	if err != nil {
-		log.Fatal(err)
-	}
+    err = json.Unmarshal([]byte(file), &config)
+    if err != nil {
+	log.Fatal(err)
+    }
 
-	for _, node := range config.Nodes {
-		node.Url = fmt.Sprintf("%s:%d", node.Host, node.Port)
-		if node.Id == config.LeaderId {
-			node.IsLeader = true
-		} else {
-			node.IsLeader = false
-		}
+    for _, node := range config.Nodes {
+	node.Url = fmt.Sprintf("%s:%d", node.Host, node.Port)
+	/*
+	if node.Id == config.LeaderId {
+	    node.IsLeader = true
+	} else {
+	    node.IsLeader = false
 	}
-	return config
+	*/
+    }
+    return config
 }
 
 func (p *ProxyNode) ReadBlockedSites(path string) {
-	file, err := os.Open(path)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer file.Close()
+    file, err := os.Open(path)
+    if err != nil {
+	log.Fatal(err)
+    }
+    defer file.Close()
 
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		site := scanner.Text()
-		p.BlockedSites[site] = site
-	}
+    scanner := bufio.NewScanner(file)
+    for scanner.Scan() {
+	site := scanner.Text()
+	p.BlockedSites[site] = site
+    }
 }
 
-func (p *ProxyNode) StartServer() {
-	http.HandleFunc("/", p.HandleRequest)
-	http.HandleFunc("/proxy/", p.HandleProxyRequest)
-	port := fmt.Sprintf(":%d", p.Info.Port)
-	log.Fatal(http.ListenAndServe(port, nil))
+func (p *ProxyNode) HandleRequests() {
+    l := p.Messenger.Listener
+    for {
+	conn, err := l.Accept()
+	if err != nil {
+	    log.Fatal(err)
+	}
+	var buf bytes.Buffer
+	io.Copy(&buf, conn)
+	b := buf.Bytes()
+	go p.HandleRequest(b)
+	conn.Close()
+    }
 }
 
-func (p *ProxyNode) ForwardRequest(w http.ResponseWriter, r *http.Request, peer_id int) bool {
-	// default to ourselves
-	url := p.Info.Url
+func (p *ProxyNode) HandleRequest(b []byte) {
+    message := BytesToMessage(b)
+    message_hash := HashBytes(message.Data)
 
-	if peer_id != -1 {
-		// figure out which node to send it to (round robin for now)
-		url = p.PeerInfo[peer_id].Url
-	}
+    p.Messenger.PruneStoredMessages()
+    message_found := p.Messenger.HasMessageStored(message_hash)
 
-	// make a copy of the request and send it to the corresponding child
-	request_path := fmt.Sprintf("http://%s/proxy%s", url, r.URL.Path)
-	new_request, err := http.NewRequest(r.Method, request_path, r.Body)
-	new_request.Header = r.Header
-	new_request.Host = r.Host
-	client := &http.Client{}
+    if !message_found && message.SenderUrl != p.Info.Url {
+	p.Messenger.RecentMessageHashes[message_hash] = message.Timestamp
 
-	// copy back the response from the child
-	res, err := client.Do(new_request)
-	if err != nil {
-		// couldn't connect to the child :(
-		return false
-	}
-	for key, slice := range res.Header {
-		for _, val := range slice {
-			w.Header().Add(key, val)
+	if message.MessageType == MULTICAST_MESSAGE {
+	    println(string(message.Data))
+	    p.Multicast(b)
+	} else if message.MessageType == JOIN_REQUEST_MESSAGE {
+	    m := string(message.Data)
+	    tokens := strings.Split(m, ":")
+	    port, _ := strconv.Atoi(tokens[1])
+	    new_node_info := CreateNodeInfo(tokens[0], port, false)
+	    log.Printf("New node joined with URL %s!", new_node_info.Url)
+	    p.PeerInfo = append(p.PeerInfo, new_node_info)
+
+	    // notify all the nodes in the group of the new node joining
+	    nodes_string := p.ConstructAllNodesString()
+	    msg := CreateMessage([]byte(nodes_string), p.Info.Url, JOIN_RESPONSE_MESSAGE)
+	    p.Multicast(MessageToBytes(msg))
+
+	} else if message.MessageType == JOIN_RESPONSE_MESSAGE {
+	    p.Multicast(b)
+	    peer_infos := strings.Split(string(message.Data), " ")
+	    for _, info := range peer_infos {
+		tokens := strings.Split(info, ":")
+		port, _ := strconv.Atoi(tokens[1])
+		url := fmt.Sprintf("%s:%d", tokens[0], port);
+
+		if url == p.Info.Url {
+		    continue
 		}
+		if !p.ContainsUrl(url) {
+		    new_node_info := CreateNodeInfo(tokens[0], port, false)
+		    p.PeerInfo = append(p.PeerInfo, new_node_info)
+		    log.Printf("New node joined with URL %s!", new_node_info.Url)
+		}
+	    }
+
+	} else if message.MessageType == UNICAST_MESSAGE {
+	    println(string(message.Data))
 	}
-	io.Copy(w, res.Body)
-	p.Cache.CacheSet(*r.URL, res, time.Duration(5.0))
-	return true
+    }
 }
 
-func (p *ProxyNode) HandleRequest(w http.ResponseWriter, r *http.Request) {
+func (p *ProxyNode) Unicast(message []byte, url string) {
+    conn, err := net.Dial("tcp", url)
+    if err != nil {
+	log.Fatal(err)
+    }
 
-	// if we are the leader, forward the response to a child node!
-	if p.Info.IsLeader {
+    defer conn.Close()
 
-		res := p.Cache.CacheGet(*r.URL)
-		if res != nil {
-			log.Printf("Cached request: %s\n", r.URL.Host)
-			for key, slice := range res.Header {
-				for _, val := range slice {
-					w.Header().Add(key, val)
-				}
-			}
-			io.Copy(w, res.Body)
-			return
-		}
-
-		// try forwarding the response a child node
-		for i := 0; i < len(p.PeerInfo); i++ {
-			if p.ForwardRequest(w, r, p.SendingPeerIdx) {
-				p.SendingPeerIdx = (p.SendingPeerIdx + 1) % len(p.PeerInfo)
-				return
-			}
-			// update the round-robin counter
-			p.SendingPeerIdx = (p.SendingPeerIdx + 1) % len(p.PeerInfo)
-		}
-
-		// if we reach here, we were unable to connect to any child nodes, so we'll just send the request ourselves
-		p.ForwardRequest(w, r, -1)
-	}
+    _, err = conn.Write(message)
+    if err != nil {
+	log.Fatal(err)
+    }
+    return;
 }
 
-func (p *ProxyNode) HandleProxyRequest(w http.ResponseWriter, r *http.Request) {
-
-	// check if this site is blocked
-	_, blocked := p.BlockedSites[r.Host]
-	if blocked {
-		log.Println("Blocked site!")
-		fmt.Fprintf(w, "Site is blocked!\n")
-		return
-	}
-
-	// format new request
-	request_path := fmt.Sprintf("http://%s%s", r.Host, r.URL.Path[len("/proxy"):])
-	// create new HTTP request with the target URL (everything else is the same)
-	new_request, err := http.NewRequest(r.Method, request_path, r.Body)
-
-	// send request to server
-	log.Printf("Sending %s request to %s\n", r.Method, request_path)
-	client := &http.Client{}
-	res, err := client.Do(new_request)
+func (p *ProxyNode) Multicast(message []byte) {
+    for _, info := range p.PeerInfo {
+	url := info.Url
+	conn, err := net.Dial("tcp", url)
 	if err != nil {
-		log.Panic(err)
+	    log.Fatal(err.Error())
 	}
-	defer res.Body.Close()
-
-	// copy the headers over to the ResponseWriter.
-	//res.Header is a map of string -> slice (string)
-	for key, slice := range res.Header {
-		for _, val := range slice {
-			w.Header().Add(key, val)
-		}
-	}
-
-	// forward response to client
-	_, err = io.Copy(w, res.Body)
+	_, err = conn.Write(message)
 	if err != nil {
-		log.Panic(err)
+	    log.Fatal(err.Error())
 	}
+	conn.Close()
+    }
+}
+
+func (p *ProxyNode) ConstructAllNodesString() string {
+    rv := p.Info.Url
+    for _, info := range p.PeerInfo {
+	rv += " "
+	rv += info.Url
+    }
+    return rv
+}
+
+func (p *ProxyNode) ContainsUrl(url string ) bool {
+    for _, info := range p.PeerInfo {
+	if url == info.Url {
+	    return true
+	}
+    }
+    return false
 }
