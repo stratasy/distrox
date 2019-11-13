@@ -36,7 +36,7 @@ type ProxyNode struct {
     SendingPeerIdx int
     //Cache          *LocalCache
     Messenger *TCPMessenger
-    Lock	sync.Mutex
+    Cond    sync.Cond
 }
 
 func CreateProxyNode(host string, port int, leader bool) *ProxyNode {
@@ -101,11 +101,31 @@ func (p *ProxyNode) HandleHttpRequest(w http.ResponseWriter, r *http.Request) {
     // check if this site is blocked
     _, blocked := p.BlockedSites[r.Host]
     if blocked {
-        log.Println("Blocked site!")
-        fmt.Fprintf(w, "Site is blocked!\n")
-        return
+	log.Println("Blocked site!")
+	fmt.Fprintf(w, "Site is blocked!\n")
+	return
     }
 
+    req := HTTPRequest{
+	Method: r.Method,
+	Url: *r.URL,
+	Header: r.Header,
+	ContentLength: r.ContentLength,
+	Host: r.Host,
+    }
+    b, err := ioutil.ReadAll(r.Body)
+    if err != nil {
+	log.Panic(err)
+    }
+    req.Body = b
+
+    req_bytes := HttpRequestToBytes(req)
+
+    msg := CreateMessage(req_bytes, p.Info.Url, HTTP_REQUEST_MESSAGE)
+
+    p.Unicast(MessageToBytes(msg), "localhost:8082")
+
+    /*
     // format new request
     request_path := fmt.Sprintf("http://%s%s", r.Host, r.URL.Path)
     // create new HTTP request with the target URL (everything else is the same)
@@ -116,24 +136,24 @@ func (p *ProxyNode) HandleHttpRequest(w http.ResponseWriter, r *http.Request) {
     client := &http.Client{}
     res, err := client.Do(new_request)
     if err != nil {
-        log.Panic(err)
+	log.Panic(err)
     }
     defer res.Body.Close()
 
     // copy the headers over to the ResponseWriter.
     //res.Header is a map of string -> slice (string)
     for key, slice := range res.Header {
-        for _, val := range slice {
-            w.Header().Add(key, val)
-        }
+	for _, val := range slice {
+	    w.Header().Add(key, val)
+	}
     }
 
     // forward response to client
     _, err = io.Copy(w, res.Body)
     if err != nil {
-        log.Panic(err)
+	log.Panic(err)
     }
-
+    */
 }
 
 func (p *ProxyNode) HandleRequests() {
@@ -209,8 +229,37 @@ func (p *ProxyNode) HandleRequest(b []byte) {
 	    log.Printf("Node has died with URL %s!", url_to_remove)
 	    p.RemoveNodeFromPeers(url_to_remove)
 	    p.Multicast(b)
-	} else if message.MessageType == UNICAST_MESSAGE {
-	    println(string(message.Data))
+	} else if message.MessageType == HTTP_REQUEST_MESSAGE {
+	    r := BytesToHttpRequest(message.Data)
+
+	    request_path := fmt.Sprintf("http://%s%s", r.Host, r.Url.Path)
+	    new_request, err := http.NewRequest(r.Method, request_path, bytes.NewReader(r.Body))
+
+	    log.Printf("Sending %s request to %s\n", r.Method, request_path)
+	    client := &http.Client{}
+	    res, err := client.Do(new_request)
+	    if err != nil {
+		log.Panic(err)
+	    }
+	    defer res.Body.Close()
+
+	    body_bytes, err := ioutil.ReadAll(res.Body)
+	    if err != nil {
+		log.Panic(err)
+	    }
+
+	    res_to_send := HTTPResponse{}
+	    res_to_send.Status = res.Status
+	    res_to_send.Header = res.Header
+	    res_to_send.Body = body_bytes
+	    res_to_send.ContentLength = res.ContentLength
+
+	    bytes_to_send := HttpResponseToBytes(res_to_send)
+	    msg := CreateMessage(bytes_to_send, p.Info.Url, HTTP_RESPONSE_MESSAGE)
+	    p.Unicast(MessageToBytes(msg), "localhost:8081") // TODO: remove hardcoding
+	} else if message.MessageType == HTTP_RESPONSE_MESSAGE {
+	    res := BytesToHttpRequest(message.Data)
+	    println(string(res.Body))
 	}
     }
 }

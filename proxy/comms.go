@@ -6,6 +6,8 @@ import (
     "net"
     "encoding/json"
     "hash/fnv"
+    "net/url"
+    "net/http"
 )
 
 const (
@@ -14,6 +16,8 @@ const (
     JOIN_REQUEST_MESSAGE = 2 // Message used for joining the cluster (request)
     JOIN_NOTIFY_MESSAGE = 3 // Message used for noifiying the cluster that a new node has joined
     LEAVE_NOTIFY_MESSAGE = 4 // Message used for notifying the cluster that a node has died
+    HTTP_REQUEST_MESSAGE = 5
+    HTTP_RESPONSE_MESSAGE = 6
 )
 
 type Message struct {
@@ -29,11 +33,19 @@ type TCPMessenger struct {
 }
 
 type HTTPRequest struct {
-
+    Method string
+    Url url.URL
+    Header http.Header
+    Body []byte
+    ContentLength int64
+    Host string
 }
 
 type HTTPResponse struct {
-
+    Status string
+    Header http.Header
+    Body []byte
+    ContentLength int64
 }
 
 func InitTCPMessenger(url string) *TCPMessenger {
@@ -89,4 +101,32 @@ func (m TCPMessenger) PruneStoredMessages() {
 func (m TCPMessenger) HasMessageStored(hash uint32) bool {
     _, ok := m.RecentMessageHashes[hash]
     return ok
+}
+
+func HttpRequestToBytes (r HTTPRequest) []byte {
+    b, err := json.Marshal(r)
+    if err != nil {
+	log.Fatal(err)
+    }
+    return b
+}
+
+func BytesToHttpRequest (b []byte) HTTPRequest {
+    rv := HTTPRequest{}
+    json.Unmarshal(b, &rv)
+    return rv
+}
+
+func HttpResponseToBytes (r HTTPResponse) []byte {
+    b, err := json.Marshal(r)
+    if err != nil {
+	log.Fatal(err)
+    }
+    return b
+}
+
+func BytesToHttpResponse (b []byte) HTTPResponse {
+    rv := HTTPResponse{}
+    json.Unmarshal(b, &rv)
+    return rv
 }
