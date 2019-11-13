@@ -13,6 +13,7 @@ import (
     "strconv"
     "net"
     "net/http"
+    "sync"
 )
 
 type ProxyConfig struct {
@@ -35,6 +36,7 @@ type ProxyNode struct {
     SendingPeerIdx int
     //Cache          *LocalCache
     Messenger *TCPMessenger
+    Lock	sync.Mutex
 }
 
 func CreateProxyNode(host string, port int, leader bool) *ProxyNode {
@@ -235,9 +237,17 @@ func (p *ProxyNode) Unicast(message []byte, url string) bool {
 }
 
 func (p *ProxyNode) Multicast(message []byte) {
-    for _, info := range p.PeerInfo {
-	url := info.Url
-	p.Unicast(message, url)
+    succeeded := false
+    for !succeeded {
+	good := true
+	for _, info := range p.PeerInfo {
+	    url := info.Url
+	    if !p.Unicast(message, url) {
+		good = false
+		break
+	    }
+	}
+	succeeded = good
     }
 }
 
