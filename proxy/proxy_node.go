@@ -12,6 +12,7 @@ import (
     "strings"
     "strconv"
     "net"
+    "net/http"
 )
 
 type ProxyConfig struct {
@@ -94,7 +95,18 @@ func (p *ProxyNode) ReadBlockedSites(path string) {
     }
 }
 
+func (p *ProxyNode) HandleHttpRequest(w http.ResponseWriter, r *http.Request) {
+    println("test")
+}
+
 func (p *ProxyNode) HandleRequests() {
+    if p.Info.IsLeader {
+	go func() {
+	    http.HandleFunc("/", p.HandleHttpRequest)
+	    log.Fatal(http.ListenAndServe("localhost:8080", nil))
+	}()
+    }
+
     l := p.Messenger.Listener
     for {
 	conn, err := l.Accept()
