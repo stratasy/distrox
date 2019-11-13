@@ -123,7 +123,7 @@ func (p *ProxyNode) HandleRequests() {
 
 func (p *ProxyNode) HandleRequest(b []byte) {
     message := BytesToMessage(b)
-    message_hash := HashBytes(message.Data)
+    message_hash := HashBytes(b)
 
     p.Messenger.PruneStoredMessages()
     message_found := p.Messenger.HasMessageStored(message_hash)
@@ -140,14 +140,16 @@ func (p *ProxyNode) HandleRequest(b []byte) {
 	    port, _ := strconv.Atoi(tokens[1])
 	    new_node_info := CreateNodeInfo(tokens[0], port, false)
 	    log.Printf("New node joined with URL %s!", new_node_info.Url)
-	    p.PeerInfo = append(p.PeerInfo, new_node_info)
+
+	    if (!p.ContainsUrl(new_node_info.Url)){
+		p.PeerInfo = append(p.PeerInfo, new_node_info)
+	    }
 
 	    // notify all the nodes in the group of the new node joining
-	    nodes_string := p.ConstructAllNodesString()
-	    msg := CreateMessage([]byte(nodes_string), p.Info.Url, JOIN_RESPONSE_MESSAGE)
+	    msg := p.ConstructNodeJoinedMessage()
 	    p.Multicast(MessageToBytes(msg))
 
-	} else if message.MessageType == JOIN_RESPONSE_MESSAGE {
+	} else if message.MessageType == JOIN_NOTIFY_MESSAGE {
 	    p.Multicast(b)
 	    peer_infos := strings.Split(string(message.Data), " ")
 	    for _, info := range peer_infos {
@@ -165,49 +167,58 @@ func (p *ProxyNode) HandleRequest(b []byte) {
 		}
 	    }
 
+	} else if message.MessageType == LEAVE_NOTIFY_MESSAGE {
+	    url_to_remove := string(message.Data)
+	    log.Printf("Node has died with URL %s!", url_to_remove)
+	    p.RemoveNodeFromPeers(url_to_remove)
+	    p.Multicast(b)
 	} else if message.MessageType == UNICAST_MESSAGE {
 	    println(string(message.Data))
 	}
     }
 }
 
-func (p *ProxyNode) Unicast(message []byte, url string) {
+func (p *ProxyNode) Unicast(message []byte, url string) bool {
     conn, err := net.Dial("tcp", url)
     if err != nil {
-	log.Fatal(err)
+	// Unable to connect with the other node, that node must have died.
+	p.RemoveNodeFromPeers(url)
+	log.Printf("Node has died with URL %s!", url)
+
+	msg := p.ConstructNodeLeftMessage(url)
+	p.Multicast(MessageToBytes(msg))
+	return false
     }
 
     defer conn.Close()
 
     _, err = conn.Write(message)
     if err != nil {
-	log.Fatal(err)
+	log.Panic(err)
     }
-    return;
+    return true
 }
 
 func (p *ProxyNode) Multicast(message []byte) {
     for _, info := range p.PeerInfo {
 	url := info.Url
-	conn, err := net.Dial("tcp", url)
-	if err != nil {
-	    log.Fatal(err.Error())
-	}
-	_, err = conn.Write(message)
-	if err != nil {
-	    log.Fatal(err.Error())
-	}
-	conn.Close()
+	p.Unicast(message, url)
     }
 }
 
-func (p *ProxyNode) ConstructAllNodesString() string {
+func (p *ProxyNode) ConstructNodeJoinedMessage() Message {
     rv := p.Info.Url
     for _, info := range p.PeerInfo {
 	rv += " "
 	rv += info.Url
     }
-    return rv
+    msg := CreateMessage([]byte(rv), p.Info.Url, JOIN_NOTIFY_MESSAGE)
+    return msg
+}
+
+func (p *ProxyNode) ConstructNodeLeftMessage(url string) Message {
+    msg := CreateMessage([]byte(url), p.Info.Url, LEAVE_NOTIFY_MESSAGE)
+    return msg
 }
 
 func (p *ProxyNode) ContainsUrl(url string ) bool {
@@ -217,4 +228,23 @@ func (p *ProxyNode) ContainsUrl(url string ) bool {
 	}
     }
     return false
+}
+
+func (p *ProxyNode) IndexFromString(url string) int {
+    for i, info := range p.PeerInfo{
+	if info.Url == url {
+	    return i
+	}
+    }
+    return -1
+}
+
+func (p *ProxyNode) RemoveNodeFromPeers(url string) {
+    idx := p.IndexFromString(url)
+    if idx == -1 {
+	return
+    }
+    p.PeerInfo[idx] = p.PeerInfo[len(p.PeerInfo)-1]
+    p.PeerInfo[len(p.PeerInfo)-1] = nil
+    p.PeerInfo = p.PeerInfo[:len(p.PeerInfo)-1]
 }

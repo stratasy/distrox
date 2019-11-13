@@ -12,7 +12,8 @@ const (
     UNICAST_MESSAGE = 0 // Message to a single node
     MULTICAST_MESSAGE = 1 // Message to every node
     JOIN_REQUEST_MESSAGE = 2 // Message used for joining the cluster (request)
-    JOIN_RESPONSE_MESSAGE = 3 // Message used for joining the cluster (response)
+    JOIN_NOTIFY_MESSAGE = 3 // Message used for noifiying the cluster that a new node has joined
+    LEAVE_NOTIFY_MESSAGE = 4 // Message used for notifying the cluster that a node has died
 )
 
 type Message struct {
