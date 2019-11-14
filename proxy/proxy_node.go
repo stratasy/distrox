@@ -18,14 +18,14 @@ import (
 )
 
 type ProxyConfig struct {
-	LeaderId         int         `json:"leader_id"`
-	BlockedSitesPath string      `json:"blocked_sites_path"`
-	Nodes            []*NodeInfo `json:"nodes"`
+	LeaderId         int
+	BlockedSitesPath string
+	Nodes            []*NodeInfo
 }
 
 type NodeInfo struct {
-	Host     string `json:"host"`
-	Port     int    `"json:"port"`
+	Host     string
+	Port     int
 	Url      string
 	IsLeader bool
 }
@@ -40,6 +40,7 @@ type ProxyNode struct {
 	Responses map[string]HTTPResponse
 	Lock      *sync.Mutex
 	CV        *sync.Cond
+	CurrentForwardingIdx  int
 }
 
 func CreateProxyNode(host string, port int, leader bool) *ProxyNode {
@@ -130,13 +131,25 @@ func (p *ProxyNode) HandleHttpRequest(w http.ResponseWriter, r *http.Request) {
 
 	msg := CreateMessage(req_bytes, p.Info.Url, HTTP_REQUEST_MESSAGE)
 
-	p.Unicast(MessageToBytes(msg), "localhost:8082") //TODO: remove hardcoding
+	succeeded := false
+	println(len(p.PeerInfo))
+	for i:=0; i<len(p.PeerInfo); i++ {
+	    p.CurrentForwardingIdx = (p.CurrentForwardingIdx + 1) % len(p.PeerInfo)
+	    if p.Unicast(MessageToBytes(msg), p.PeerInfo[p.CurrentForwardingIdx].Url) {
+		succeeded = true
+		break
+	    }
+	}
+	if !succeeded {
+	    println("failed!")
+	}
 
 	p.Lock.Lock()
 	for !p.ContainsResponse(req.RequestUrl) {
 		p.CV.Wait()
 	}
 	res := p.Responses[req.RequestUrl]
+	delete(p.Responses, req.RequestUrl)
 	p.Lock.Unlock()
 
 	for key, slice := range res.Header {
@@ -183,7 +196,9 @@ func (p *ProxyNode) HandleRequest(b []byte) {
 	p.Lock.Unlock()
 
 	if !message_found && message.SenderUrl != p.Info.Url {
+		p.Lock.Lock()
 		p.Messenger.RecentMessageHashes[message_hash] = message.Timestamp
+		p.Lock.Unlock()
 
 		if message.MessageType == MULTICAST_MESSAGE {
 			println(string(message.Data))
