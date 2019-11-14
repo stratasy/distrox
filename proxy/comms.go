@@ -6,7 +6,6 @@ import (
     "net"
     "encoding/json"
     "hash/fnv"
-    "net/url"
     "net/http"
 )
 
@@ -34,15 +33,15 @@ type TCPMessenger struct {
 
 type HTTPRequest struct {
     Method string
-    Url url.URL
+    RequestUrl string
     Header http.Header
     Body []byte
     ContentLength int64
-    Host string
 }
 
 type HTTPResponse struct {
     Status string
+    RequestUrl string
     Header http.Header
     Body []byte
     ContentLength int64

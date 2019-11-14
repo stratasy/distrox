@@ -13,6 +13,7 @@ import (
     "strconv"
     "net"
     "net/http"
+    "time"
     "sync"
 )
 
@@ -36,7 +37,9 @@ type ProxyNode struct {
     SendingPeerIdx int
     //Cache          *LocalCache
     Messenger *TCPMessenger
-    Cond    sync.Cond
+    Responses	    map[string]HTTPResponse
+    Lock	*sync.Mutex
+    CV		*sync.Cond
 }
 
 func CreateProxyNode(host string, port int, leader bool) *ProxyNode {
@@ -46,6 +49,10 @@ func CreateProxyNode(host string, port int, leader bool) *ProxyNode {
     rv.SendingPeerIdx = 0
     rv.Info = CreateNodeInfo(host, port, leader)
     rv.Messenger = InitTCPMessenger(rv.Info.Url)
+    rv.Responses = make(map[string]HTTPResponse)
+
+    rv.Lock = &sync.Mutex{}
+    rv.CV = sync.NewCond(rv.Lock)
     return rv
 }
 
@@ -94,6 +101,7 @@ func (p *ProxyNode) ReadBlockedSites(path string) {
     for scanner.Scan() {
 	site := scanner.Text()
 	p.BlockedSites[site] = site
+	time.Sleep(100 * time.Millisecond)
     }
 }
 
@@ -108,10 +116,9 @@ func (p *ProxyNode) HandleHttpRequest(w http.ResponseWriter, r *http.Request) {
 
     req := HTTPRequest{
 	Method: r.Method,
-	Url: *r.URL,
+	RequestUrl: fmt.Sprintf("%s%s", r.Host, r.URL.Path),
 	Header: r.Header,
 	ContentLength: r.ContentLength,
-	Host: r.Host,
     }
     b, err := ioutil.ReadAll(r.Body)
     if err != nil {
@@ -123,43 +130,31 @@ func (p *ProxyNode) HandleHttpRequest(w http.ResponseWriter, r *http.Request) {
 
     msg := CreateMessage(req_bytes, p.Info.Url, HTTP_REQUEST_MESSAGE)
 
-    p.Unicast(MessageToBytes(msg), "localhost:8082")
+    p.Unicast(MessageToBytes(msg), "localhost:8082") //TODO: remove hardcoding
 
-    /*
-    // format new request
-    request_path := fmt.Sprintf("http://%s%s", r.Host, r.URL.Path)
-    // create new HTTP request with the target URL (everything else is the same)
-    new_request, err := http.NewRequest(r.Method, request_path, r.Body)
-
-    // send request to server
-    log.Printf("Sending %s request to %s\n", r.Method, request_path)
-    client := &http.Client{}
-    res, err := client.Do(new_request)
-    if err != nil {
-	log.Panic(err)
+    p.Lock.Lock()
+    for !p.ContainsResponse(req.RequestUrl) {
+	p.CV.Wait()
     }
-    defer res.Body.Close()
+    res := p.Responses[req.RequestUrl]
+    p.Lock.Unlock()
 
-    // copy the headers over to the ResponseWriter.
-    //res.Header is a map of string -> slice (string)
     for key, slice := range res.Header {
-	for _, val := range slice {
-	    w.Header().Add(key, val)
-	}
+        for _, val := range slice {
+            w.Header().Add(key, val)
+        }
     }
-
-    // forward response to client
-    _, err = io.Copy(w, res.Body)
+    _, err = io.Copy(w, bytes.NewReader(res.Body))
     if err != nil {
 	log.Panic(err)
     }
-    */
 }
 
 func (p *ProxyNode) HandleRequests() {
     if p.Info.IsLeader {
 	go func() {
 	    http.HandleFunc("/", p.HandleHttpRequest)
+	    // TODO: remove hardcoding
 	    log.Fatal(http.ListenAndServe("localhost:8080", nil))
 	}()
     }
@@ -182,8 +177,10 @@ func (p *ProxyNode) HandleRequest(b []byte) {
     message := BytesToMessage(b)
     message_hash := HashBytes(b)
 
+    p.Lock.Lock()
     p.Messenger.PruneStoredMessages()
     message_found := p.Messenger.HasMessageStored(message_hash)
+    p.Lock.Unlock()
 
     if !message_found && message.SenderUrl != p.Info.Url {
 	p.Messenger.RecentMessageHashes[message_hash] = message.Timestamp
@@ -223,7 +220,6 @@ func (p *ProxyNode) HandleRequest(b []byte) {
 		    log.Printf("New node joined with URL %s!", new_node_info.Url)
 		}
 	    }
-
 	} else if message.MessageType == LEAVE_NOTIFY_MESSAGE {
 	    url_to_remove := string(message.Data)
 	    log.Printf("Node has died with URL %s!", url_to_remove)
@@ -232,7 +228,7 @@ func (p *ProxyNode) HandleRequest(b []byte) {
 	} else if message.MessageType == HTTP_REQUEST_MESSAGE {
 	    r := BytesToHttpRequest(message.Data)
 
-	    request_path := fmt.Sprintf("http://%s%s", r.Host, r.Url.Path)
+	    request_path := fmt.Sprintf("http://%s", r.RequestUrl)
 	    new_request, err := http.NewRequest(r.Method, request_path, bytes.NewReader(r.Body))
 
 	    log.Printf("Sending %s request to %s\n", r.Method, request_path)
@@ -248,18 +244,25 @@ func (p *ProxyNode) HandleRequest(b []byte) {
 		log.Panic(err)
 	    }
 
-	    res_to_send := HTTPResponse{}
-	    res_to_send.Status = res.Status
-	    res_to_send.Header = res.Header
-	    res_to_send.Body = body_bytes
-	    res_to_send.ContentLength = res.ContentLength
+	    res_to_send := HTTPResponse{
+		Status: res.Status,
+		RequestUrl: r.RequestUrl,
+		Header: res.Header,
+		Body: body_bytes,
+		ContentLength: res.ContentLength,
+	    }
 
 	    bytes_to_send := HttpResponseToBytes(res_to_send)
 	    msg := CreateMessage(bytes_to_send, p.Info.Url, HTTP_RESPONSE_MESSAGE)
 	    p.Unicast(MessageToBytes(msg), "localhost:8081") // TODO: remove hardcoding
 	} else if message.MessageType == HTTP_RESPONSE_MESSAGE {
-	    res := BytesToHttpRequest(message.Data)
-	    println(string(res.Body))
+	    res := BytesToHttpResponse(message.Data)
+	    p.Lock.Lock()
+	    p.Responses[res.RequestUrl] = res
+	    p.Lock.Unlock()
+	    p.CV.Broadcast()
+	} else if message.MessageType == UNICAST_MESSAGE {
+	    println(string(message.Data))
 	}
     }
 }
@@ -341,4 +344,9 @@ func (p *ProxyNode) RemoveNodeFromPeers(url string) {
     p.PeerInfo[idx] = p.PeerInfo[len(p.PeerInfo)-1]
     p.PeerInfo[len(p.PeerInfo)-1] = nil
     p.PeerInfo = p.PeerInfo[:len(p.PeerInfo)-1]
+}
+
+func (p *ProxyNode) ContainsResponse(url string) bool {
+    _, ok := p.Responses[url]
+    return ok
 }
