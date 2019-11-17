@@ -37,7 +37,7 @@ type ProxyNode struct {
 	SendingPeerIdx int
 	//Cache          *LocalCache
 	Messenger *TCPMessenger
-	Responses map[string]HTTPResponse
+	Responses map[string]HTTPResponse // Change to localCache
 	Lock      *sync.Mutex
 	CV        *sync.Cond
 	CurrentForwardingIdx  int
