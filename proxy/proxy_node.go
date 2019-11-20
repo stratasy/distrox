@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"proxy/proxy/cache"
 )
 
 type ProxyConfig struct {
@@ -37,7 +38,8 @@ type ProxyNode struct {
 	SendingPeerIdx int
 	//Cache          *LocalCache
 	Messenger *TCPMessenger
-	Responses map[string]HTTPResponse // Change to localCache
+	Responses *cache.LocalCache
+	//Responses map[string]HTTPResponse // Change to localCache
 	Lock      *sync.Mutex
 	CV        *sync.Cond
 	CurrentForwardingIdx  int
@@ -50,7 +52,8 @@ func CreateProxyNode(host string, port int, leader bool) *ProxyNode {
 	rv.SendingPeerIdx = 0
 	rv.Info = CreateNodeInfo(host, port, leader)
 	rv.Messenger = InitTCPMessenger(rv.Info.Url)
-	rv.Responses = make(map[string]HTTPResponse)
+	//rv.Responses = make(map[string]HTTPResponse)
+	rv.Responses = CreateLocalCache()
 
 	rv.Lock = &sync.Mutex{}
 	rv.CV = sync.NewCond(rv.Lock)
@@ -148,8 +151,9 @@ func (p *ProxyNode) HandleHttpRequest(w http.ResponseWriter, r *http.Request) {
 	for !p.ContainsResponse(req.RequestUrl) {
 		p.CV.Wait()
 	}
-	res := p.Responses[req.RequestUrl]
-	delete(p.Responses, req.RequestUrl)
+	//res := p.Responses[req.RequestUrl]
+	res := p.Responses.CacheGet(req.RequestUrl)
+	//delete(p.Responses, req.RequestUrl)
 	p.Lock.Unlock()
 
 	for key, slice := range res.Header {
@@ -273,7 +277,8 @@ func (p *ProxyNode) HandleRequest(b []byte) {
 		} else if message.MessageType == HTTP_RESPONSE_MESSAGE {
 			res := BytesToHttpResponse(message.Data)
 			p.Lock.Lock()
-			p.Responses[res.RequestUrl] = res
+			p.Responses.CacheSet(res.RequestUrl, res, 5) // Hardcoded to 5 seconds atm.
+			//p.Responses[res.RequestUrl] = res
 			p.Lock.Unlock()
 			p.CV.Broadcast()
 		} else if message.MessageType == UNICAST_MESSAGE {
@@ -362,6 +367,10 @@ func (p *ProxyNode) RemoveNodeFromPeers(url string) {
 }
 
 func (p *ProxyNode) ContainsResponse(url string) bool {
-	_, ok := p.Responses[url]
-	return ok
+	res := p.Responses.CacheGet(url)
+	if res != nil {
+		return 1
+	}
+	//_, ok := p.Responses[url]
+	return 0
 }
