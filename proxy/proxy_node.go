@@ -15,7 +15,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"proxy/proxy/cache"
 )
 
 type ProxyConfig struct {
@@ -36,10 +35,8 @@ type ProxyNode struct {
 	Info           *NodeInfo
 	PeerInfo       []*NodeInfo
 	SendingPeerIdx int
-	//Cache          *LocalCache
 	Messenger *TCPMessenger
-	Responses *cache.LocalCache
-	//Responses map[string]HTTPResponse // Change to localCache
+	Responses *LocalCache
 	Lock      *sync.Mutex
 	CV        *sync.Cond
 	CurrentForwardingIdx  int
@@ -52,11 +49,13 @@ func CreateProxyNode(host string, port int, leader bool) *ProxyNode {
 	rv.SendingPeerIdx = 0
 	rv.Info = CreateNodeInfo(host, port, leader)
 	rv.Messenger = InitTCPMessenger(rv.Info.Url)
-	//rv.Responses = make(map[string]HTTPResponse)
 	rv.Responses = CreateLocalCache()
 
 	rv.Lock = &sync.Mutex{}
 	rv.CV = sync.NewCond(rv.Lock)
+
+	go rv.StartBackgroundChecker()
+
 	return rv
 }
 
@@ -130,12 +129,29 @@ func (p *ProxyNode) HandleHttpRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Body = b
 
+	p.Lock.Lock()
+	cached := p.ContainsResponse(req.RequestUrl)
+	p.Lock.Unlock()
+	if cached {
+	    println("cached!")
+	    res := p.Responses.CacheGet(req.RequestUrl)
+	    for key, slice := range res.Header {
+		    for _, val := range slice {
+			    w.Header().Add(key, val)
+		    }
+	    }
+	    _, err = io.Copy(w, bytes.NewReader(res.Body))
+	    if err != nil {
+		    log.Panic(err)
+	    }
+	    return;
+	}
+
 	req_bytes := HttpRequestToBytes(req)
 
 	msg := CreateMessage(req_bytes, p.Info.Url, HTTP_REQUEST_MESSAGE)
 
 	succeeded := false
-	println(len(p.PeerInfo))
 	for i:=0; i<len(p.PeerInfo); i++ {
 	    p.CurrentForwardingIdx = (p.CurrentForwardingIdx + 1) % len(p.PeerInfo)
 	    if p.Unicast(MessageToBytes(msg), p.PeerInfo[p.CurrentForwardingIdx].Url) {
@@ -205,7 +221,7 @@ func (p *ProxyNode) HandleRequest(b []byte) {
 		p.Lock.Unlock()
 
 		if message.MessageType == MULTICAST_MESSAGE {
-			println(string(message.Data))
+			//println(string(message.Data))
 			p.Multicast(b)
 		} else if message.MessageType == JOIN_REQUEST_MESSAGE {
 			m := string(message.Data)
@@ -282,7 +298,7 @@ func (p *ProxyNode) HandleRequest(b []byte) {
 			p.Lock.Unlock()
 			p.CV.Broadcast()
 		} else if message.MessageType == UNICAST_MESSAGE {
-			println(string(message.Data))
+			//println(string(message.Data))
 		}
 	}
 }
@@ -369,8 +385,18 @@ func (p *ProxyNode) RemoveNodeFromPeers(url string) {
 func (p *ProxyNode) ContainsResponse(url string) bool {
 	res := p.Responses.CacheGet(url)
 	if res != nil {
-		return 1
+		return true
 	}
 	//_, ok := p.Responses[url]
-	return 0
+	return false
+}
+
+func (p *ProxyNode) StartBackgroundChecker() {
+    ticker := time.NewTicker(1 * time.Second)
+    for {
+	select {
+	case t := <-ticker.C:
+		p.Multicast([]byte(t.String()))
+	}
+    }
 }
