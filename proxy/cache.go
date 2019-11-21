@@ -9,8 +9,8 @@ type CacheMetadata struct {
 	// Looks like I only need header and body.
 	// Can just make two seperate items, header and body
 	// in here, which should allow for easy incorporation.
-	Header      http.Header
-	Body 	[]byte
+	Header    http.Header
+	Body      []byte
 	SavedTime time.Time
 }
 
@@ -47,13 +47,12 @@ func (cache *LocalCache) CacheGet(pageURL string) *CacheMetadata {
 func (cache *LocalCache) CacheSet(pageURL string, Res HTTPResponse, secondsToStore int) int {
 	storeDuration := time.Duration(secondsToStore)
 	cache.Mem[pageURL] = CacheMetadata{
-		Header: 		 Res.Header,
-		Body:			 Res.Body,
+		Header:    Res.Header,
+		Body:      Res.Body,
 		SavedTime: time.Now().Add(storeDuration * time.Second),
 	}
 	return 1
 }
-
 
 /*func main() {
 	cache := CreateLocalCache()

@@ -31,15 +31,15 @@ type NodeInfo struct {
 }
 
 type ProxyNode struct {
-	BlockedSites   map[string]string
-	Info           *NodeInfo
-	PeerInfo       []*NodeInfo
-	SendingPeerIdx int
-	Messenger *TCPMessenger
-	Responses *LocalCache
-	Lock      *sync.Mutex
-	CV        *sync.Cond
-	CurrentForwardingIdx  int
+	BlockedSites         map[string]string
+	Info                 *NodeInfo
+	PeerInfo             []*NodeInfo
+	SendingPeerIdx       int
+	Messenger            *TCPMessenger
+	Responses            *LocalCache
+	Lock                 *sync.Mutex
+	CV                   *sync.Cond
+	CurrentForwardingIdx int
 }
 
 func CreateProxyNode(host string, port int, leader bool) *ProxyNode {
@@ -133,18 +133,18 @@ func (p *ProxyNode) HandleHttpRequest(w http.ResponseWriter, r *http.Request) {
 	cached := p.ContainsResponse(req.RequestUrl)
 	p.Lock.Unlock()
 	if cached {
-	    println("cached!")
-	    res := p.Responses.CacheGet(req.RequestUrl)
-	    for key, slice := range res.Header {
-		    for _, val := range slice {
-			    w.Header().Add(key, val)
-		    }
-	    }
-	    _, err = io.Copy(w, bytes.NewReader(res.Body))
-	    if err != nil {
-		    log.Panic(err)
-	    }
-	    return;
+		println("cached!")
+		res := p.Responses.CacheGet(req.RequestUrl)
+		for key, slice := range res.Header {
+			for _, val := range slice {
+				w.Header().Add(key, val)
+			}
+		}
+		_, err = io.Copy(w, bytes.NewReader(res.Body))
+		if err != nil {
+			log.Panic(err)
+		}
+		return
 	}
 
 	req_bytes := HttpRequestToBytes(req)
@@ -152,15 +152,15 @@ func (p *ProxyNode) HandleHttpRequest(w http.ResponseWriter, r *http.Request) {
 	msg := CreateMessage(req_bytes, p.Info.Url, HTTP_REQUEST_MESSAGE)
 
 	succeeded := false
-	for i:=0; i<len(p.PeerInfo); i++ {
-	    p.CurrentForwardingIdx = (p.CurrentForwardingIdx + 1) % len(p.PeerInfo)
-	    if p.Unicast(MessageToBytes(msg), p.PeerInfo[p.CurrentForwardingIdx].Url) {
-		succeeded = true
-		break
-	    }
+	for i := 0; i < len(p.PeerInfo); i++ {
+		p.CurrentForwardingIdx = (p.CurrentForwardingIdx + 1) % len(p.PeerInfo)
+		if p.Unicast(MessageToBytes(msg), p.PeerInfo[p.CurrentForwardingIdx].Url) {
+			succeeded = true
+			break
+		}
 	}
 	if !succeeded {
-	    println("failed!")
+		println("failed!")
 	}
 
 	p.Lock.Lock()
@@ -392,11 +392,11 @@ func (p *ProxyNode) ContainsResponse(url string) bool {
 }
 
 func (p *ProxyNode) StartBackgroundChecker() {
-    ticker := time.NewTicker(1 * time.Second)
-    for {
-	select {
-	case t := <-ticker.C:
-		p.Multicast([]byte(t.String()))
+	ticker := time.NewTicker(1 * time.Second)
+	for {
+		select {
+		case t := <-ticker.C:
+			p.Multicast([]byte(t.String()))
+		}
 	}
-    }
 }
