@@ -3,7 +3,6 @@ package proxy
 import (
 	"bufio"
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -16,12 +15,6 @@ import (
 	"sync"
 	"time"
 )
-
-type ProxyConfig struct {
-	LeaderId         int
-	BlockedSitesPath string
-	Nodes            []*NodeInfo
-}
 
 type NodeInfo struct {
 	Host     string
@@ -70,24 +63,6 @@ func CreateNodeInfo(host string, port int, leader bool) *NodeInfo {
 	rv.IsLeader = leader
 	rv.ID = HashBytes([]byte(rv.Url))
 	return rv
-}
-
-func ReadConfig(path string) ProxyConfig {
-	var config ProxyConfig
-	file, err := ioutil.ReadFile(path)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	err = json.Unmarshal([]byte(file), &config)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	for _, node := range config.Nodes {
-		node.Url = fmt.Sprintf("%s:%d", node.Host, node.Port)
-	}
-	return config
 }
 
 func (p *ProxyNode) ReadBlockedSites(path string) {
@@ -164,9 +139,7 @@ func (p *ProxyNode) HandleHttpRequest(w http.ResponseWriter, r *http.Request) {
 	for !p.ContainsResponse(req.RequestUrl) {
 		p.CV.Wait()
 	}
-	//res := p.Responses[req.RequestUrl]
 	res := p.Responses.CacheGet(req.RequestUrl)
-	//delete(p.Responses, req.RequestUrl)
 	p.Lock.Unlock()
 
 	for key, slice := range res.Header {
