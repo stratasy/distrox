@@ -17,6 +17,9 @@ const (
 	LEAVE_NOTIFY_MESSAGE  = 4 // Message used for notifying the cluster that a node has died
 	HTTP_REQUEST_MESSAGE  = 5
 	HTTP_RESPONSE_MESSAGE = 6
+	ELECTION_MESSAGE      = 7 // Message used for leader election
+	ANSWER_MESSAGE        = 8 // Message used for leader election
+	VICTORY_MESSAGE       = 9 // Message used for leader election
 )
 
 type Message struct {

@@ -28,31 +28,34 @@ type NodeInfo struct {
 	Port     int
 	Url      string
 	IsLeader bool
+	ID       uint32
 }
 
 type ProxyNode struct {
 	BlockedSites         map[string]string
 	Info                 *NodeInfo
 	PeerInfo             []*NodeInfo
-	SendingPeerIdx       int
 	Messenger            *TCPMessenger
 	Responses            *LocalCache
 	Lock                 *sync.Mutex
 	CV                   *sync.Cond
 	CurrentForwardingIdx int
+	LeaderUrl            string
 }
 
 func CreateProxyNode(host string, port int, leader bool) *ProxyNode {
 	rv := &ProxyNode{}
 	rv.BlockedSites = make(map[string]string)
 
-	rv.SendingPeerIdx = 0
 	rv.Info = CreateNodeInfo(host, port, leader)
 	rv.Messenger = InitTCPMessenger(rv.Info.Url)
 	rv.Responses = CreateLocalCache()
 
 	rv.Lock = &sync.Mutex{}
 	rv.CV = sync.NewCond(rv.Lock)
+
+	rv.CurrentForwardingIdx = 0
+	rv.LeaderUrl = ""
 
 	go rv.StartBackgroundChecker()
 
@@ -65,6 +68,7 @@ func CreateNodeInfo(host string, port int, leader bool) *NodeInfo {
 	rv.Port = port
 	rv.Url = fmt.Sprintf("%s:%d", host, port)
 	rv.IsLeader = leader
+	rv.ID = HashBytes([]byte(rv.Url))
 	return rv
 }
 
@@ -82,13 +86,6 @@ func ReadConfig(path string) ProxyConfig {
 
 	for _, node := range config.Nodes {
 		node.Url = fmt.Sprintf("%s:%d", node.Host, node.Port)
-		/*
-			if node.Id == config.LeaderId {
-			    node.IsLeader = true
-			} else {
-			    node.IsLeader = false
-			}
-		*/
 	}
 	return config
 }
@@ -255,6 +252,11 @@ func (p *ProxyNode) HandleRequest(b []byte) {
 					log.Printf("New node joined with URL %s!", new_node_info.Url)
 				}
 			}
+
+			if p.LeaderUrl == "" {
+				p.LeaderUrl = message.SenderUrl
+			}
+
 		} else if message.MessageType == LEAVE_NOTIFY_MESSAGE {
 			url_to_remove := string(message.Data)
 			log.Printf("Node has died with URL %s!", url_to_remove)
@@ -289,7 +291,7 @@ func (p *ProxyNode) HandleRequest(b []byte) {
 
 			bytes_to_send := HttpResponseToBytes(res_to_send)
 			msg := CreateMessage(bytes_to_send, p.Info.Url, HTTP_RESPONSE_MESSAGE)
-			p.Unicast(MessageToBytes(msg), "localhost:8081") // TODO: remove hardcoding
+			p.Unicast(MessageToBytes(msg), p.LeaderUrl)
 		} else if message.MessageType == HTTP_RESPONSE_MESSAGE {
 			res := BytesToHttpResponse(message.Data)
 			p.Lock.Lock()
@@ -397,6 +399,20 @@ func (p *ProxyNode) StartBackgroundChecker() {
 		select {
 		case t := <-ticker.C:
 			p.Multicast([]byte(t.String()))
+		}
+	}
+}
+
+func (p *ProxyNode) ConstructElectionMessage() Message {
+	rv := ""
+	msg := CreateMessage([]byte(rv), p.Info.Url, ELECTION_MESSAGE)
+	return msg
+}
+
+func (p *ProxyNode) StartLeaderElection() {
+	for _, elem := range p.PeerInfo {
+		if elem.ID > p.Info.ID {
+			p.Unicast(MessageToBytes(p.ConstructElectionMessage()), elem.Url)
 		}
 	}
 }
