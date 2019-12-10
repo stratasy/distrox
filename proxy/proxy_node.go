@@ -49,7 +49,6 @@ func CreateProxyNode(host string, port int, leader bool) *ProxyNode {
 
 	rv.CurrentForwardingIdx = 0
 	rv.LeaderUrl = ""
-
 	go rv.StartBackgroundChecker()
 
 	return rv
@@ -105,7 +104,7 @@ func (p *ProxyNode) HandleHttpRequest(w http.ResponseWriter, r *http.Request) {
 	cached := p.ContainsResponse(req.RequestUrl)
 	p.Lock.Unlock()
 	if cached {
-		println("cached!")
+		println("caached!")
 		res := p.Responses.CacheGet(req.RequestUrl)
 		for key, slice := range res.Header {
 			for _, val := range slice {
