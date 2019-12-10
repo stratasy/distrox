@@ -50,7 +50,7 @@ func CreateProxyNode(host string, port int, leader bool) *ProxyNode {
 	rv.CurrentForwardingIdx = 0
 	rv.LeaderUrl = ""
 	go rv.StartBackgroundChecker()
-
+	
 	return rv
 }
 
@@ -104,7 +104,7 @@ func (p *ProxyNode) HandleHttpRequest(w http.ResponseWriter, r *http.Request) {
 	cached := p.ContainsResponse(req.RequestUrl)
 	p.Lock.Unlock()
 	if cached {
-		println("caached!")
+		println("cached!")
 		res := p.Responses.CacheGet(req.RequestUrl)
 		for key, slice := range res.Header {
 			for _, val := range slice {
@@ -271,6 +271,22 @@ func (p *ProxyNode) HandleRequest(b []byte) {
 			//p.Responses[res.RequestUrl] = res
 			p.Lock.Unlock()
 			p.CV.Broadcast()
+		} else if message.MessageType == ELECTION_MESSAGE {
+			p.StartLeaderElection()
+		} else if message.MessageType == VICTORY_MESSAGE {
+			p.LeaderUrl = message.SenderUrl
+			p.Unicast(MessageToBytes(p.ConstructAnswerMessage()), p.LeaderUrl)
+			log.Printf("%s is the new leader!\n", p.LeaderUrl)
+		} else if message.MessageType == ANSWER_MESSAGE {
+
+			p.Lock.Lock()
+			if (!p.Info.IsLeader) {
+				log.Println("AAAAAAAAAAAAAAAAAAAA")
+				log.Fatal(http.ListenAndServe("localhost:8080", nil))
+			}
+			log.Println("Current Node is now the leader!")
+			p.Info.IsLeader = true
+			p.Lock.Unlock()
 		} else if message.MessageType == UNICAST_MESSAGE {
 			//println(string(message.Data))
 		}
@@ -283,7 +299,7 @@ func (p *ProxyNode) Unicast(message []byte, url string) bool {
 		// Unable to connect with the other node, that node must have died.
 		p.RemoveNodeFromPeers(url)
 		log.Printf("Node has died with URL %s!", url)
-
+		
 		msg := p.ConstructNodeLeftMessage(url)
 		p.Multicast(MessageToBytes(msg))
 		return false
@@ -367,12 +383,29 @@ func (p *ProxyNode) ContainsResponse(url string) bool {
 
 func (p *ProxyNode) StartBackgroundChecker() {
 	ticker := time.NewTicker(1 * time.Second)
+	
 	for {
 		select {
 		case t := <-ticker.C:
 			p.Multicast([]byte(t.String()))
+
+			if (!p.Info.IsLeader && p.LeaderUrl != "") {
+				
+				conn, err := net.Dial("tcp", p.LeaderUrl)
+				if err != nil {
+					p.StartLeaderElection()
+				} else {
+					conn.Close()
+				} 
+			}
+			
 		}
 	}
+}
+func (p *ProxyNode) ConstructAnswerMessage() Message {
+	rv := ""
+	msg := CreateMessage([]byte(rv), p.Info.Url, ANSWER_MESSAGE)
+	return msg
 }
 
 func (p *ProxyNode) ConstructElectionMessage() Message {
@@ -381,10 +414,24 @@ func (p *ProxyNode) ConstructElectionMessage() Message {
 	return msg
 }
 
+func (p *ProxyNode) ConstructVictoryMessage() Message {
+	rv := ""
+	msg := CreateMessage([]byte(rv), p.Info.Url, VICTORY_MESSAGE)
+	return msg
+}
+
 func (p *ProxyNode) StartLeaderElection() {
+	highest:= true
+
 	for _, elem := range p.PeerInfo {
 		if elem.ID > p.Info.ID {
+			highest= false
 			p.Unicast(MessageToBytes(p.ConstructElectionMessage()), elem.Url)
 		}
 	}
+	if highest {
+		p.Multicast(MessageToBytes(p.ConstructVictoryMessage()))
+	}
 }
+
+// connect localhost:8081
