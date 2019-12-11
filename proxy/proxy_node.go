@@ -50,7 +50,6 @@ func CreateProxyNode(host string, port int, leader bool) *ProxyNode {
 	rv.CurrentForwardingIdx = 0
 	rv.LeaderUrl = ""
 	go rv.StartBackgroundChecker()
-	
 	return rv
 }
 
