@@ -1,6 +1,9 @@
 # Distrox
 
-## Instructions
+## What
+Distrox is a simply distributed HTTP proxy server. It currently supports caching, leader election, load balancing, and firewalls.
+
+## Usage
 
 Ensure that [golang](https://golang.org/dl/) is installed and setup correctly.
 
