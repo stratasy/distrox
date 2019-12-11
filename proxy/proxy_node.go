@@ -154,8 +154,8 @@ func (p *ProxyNode) HandleHttpRequest(w http.ResponseWriter, r *http.Request) {
 
 func (p *ProxyNode) HandleRequests() {
 	if p.Info.IsLeader {
+		http.HandleFunc("/", p.HandleHttpRequest)
 		go func() {
-			http.HandleFunc("/", p.HandleHttpRequest)
 			// TODO: remove hardcoding
 			log.Fatal(http.ListenAndServe("localhost:8080", nil))
 		}()
@@ -281,11 +281,13 @@ func (p *ProxyNode) HandleRequest(b []byte) {
 
 			p.Lock.Lock()
 			if (!p.Info.IsLeader) {
-				log.Println("AAAAAAAAAAAAAAAAAAAA")
-				log.Fatal(http.ListenAndServe("localhost:8080", nil))
+				http.HandleFunc("/", p.HandleHttpRequest)
+				go func(){
+				    log.Fatal(http.ListenAndServe("localhost:8080", nil))
+				}()
+			    p.Info.IsLeader = true
+			    log.Println("Current Node is now the leader!")
 			}
-			log.Println("Current Node is now the leader!")
-			p.Info.IsLeader = true
 			p.Lock.Unlock()
 		} else if message.MessageType == UNICAST_MESSAGE {
 			//println(string(message.Data))
@@ -299,7 +301,7 @@ func (p *ProxyNode) Unicast(message []byte, url string) bool {
 		// Unable to connect with the other node, that node must have died.
 		p.RemoveNodeFromPeers(url)
 		log.Printf("Node has died with URL %s!", url)
-		
+
 		msg := p.ConstructNodeLeftMessage(url)
 		p.Multicast(MessageToBytes(msg))
 		return false
@@ -383,22 +385,19 @@ func (p *ProxyNode) ContainsResponse(url string) bool {
 
 func (p *ProxyNode) StartBackgroundChecker() {
 	ticker := time.NewTicker(1 * time.Second)
-	
 	for {
 		select {
 		case t := <-ticker.C:
 			p.Multicast([]byte(t.String()))
 
 			if (!p.Info.IsLeader && p.LeaderUrl != "") {
-				
 				conn, err := net.Dial("tcp", p.LeaderUrl)
 				if err != nil {
 					p.StartLeaderElection()
 				} else {
 					conn.Close()
-				} 
+				}
 			}
-			
 		}
 	}
 }
