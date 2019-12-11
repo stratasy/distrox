@@ -24,7 +24,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	p := proxy.CreateProxyNode(host, port, is_leader)
+	p := proxy.CreateProxyNode(host, port, is_leader, "config.json")
 	go p.HandleRequests()
 
 	scanner := bufio.NewScanner(os.Stdin)

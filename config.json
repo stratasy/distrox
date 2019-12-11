@@ -1,0 +1,10 @@
+{
+    "public_url": "localhost:8080",
+
+    "cache_timeout": 5,
+
+    "blocked_sites": [
+        "ece.illinois.edu",
+        "math.illinois.edu"
+    ]
+}

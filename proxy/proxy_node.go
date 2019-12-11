@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"bufio"
 	"bytes"
 	"fmt"
 	"io"
@@ -9,7 +8,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,7 +23,7 @@ type NodeInfo struct {
 }
 
 type ProxyNode struct {
-	BlockedSites         map[string]string
+	Config		     *ProxyConfig
 	Info                 *NodeInfo
 	PeerInfo             []*NodeInfo
 	Messenger            *TCPMessenger
@@ -36,9 +34,9 @@ type ProxyNode struct {
 	LeaderUrl            string
 }
 
-func CreateProxyNode(host string, port int, leader bool) *ProxyNode {
+func CreateProxyNode(host string, port int, leader bool, config_path string) *ProxyNode {
 	rv := &ProxyNode{}
-	rv.BlockedSites = make(map[string]string)
+	rv.Config = LoadProxyConfig(config_path)
 
 	rv.Info = CreateNodeInfo(host, port, leader)
 	rv.Messenger = InitTCPMessenger(rv.Info.Url)
@@ -63,25 +61,9 @@ func CreateNodeInfo(host string, port int, leader bool) *NodeInfo {
 	return rv
 }
 
-func (p *ProxyNode) ReadBlockedSites(path string) {
-	file, err := os.Open(path)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		site := scanner.Text()
-		p.BlockedSites[site] = site
-		time.Sleep(100 * time.Millisecond)
-	}
-}
-
 func (p *ProxyNode) HandleHttpRequest(w http.ResponseWriter, r *http.Request) {
-	// check if this site is blocked
-	_, blocked := p.BlockedSites[r.Host]
-	if blocked {
+
+	if p.Config.SiteIsBlocked(r.Host) {
 		log.Println("Blocked site!")
 		fmt.Fprintf(w, "Site is blocked!\n")
 		return
@@ -155,8 +137,7 @@ func (p *ProxyNode) HandleRequests() {
 	if p.Info.IsLeader {
 		http.HandleFunc("/", p.HandleHttpRequest)
 		go func() {
-			// TODO: remove hardcoding
-			log.Fatal(http.ListenAndServe("localhost:8080", nil))
+			log.Fatal(http.ListenAndServe(p.Config.PublicUrl, nil))
 		}()
 	}
 
@@ -266,8 +247,7 @@ func (p *ProxyNode) HandleRequest(b []byte) {
 		} else if message.MessageType == HTTP_RESPONSE_MESSAGE {
 			res := BytesToHttpResponse(message.Data)
 			p.Lock.Lock()
-			p.Responses.CacheSet(res.RequestUrl, res, 5) // Hardcoded to 5 seconds atm.
-			//p.Responses[res.RequestUrl] = res
+			p.Responses.CacheSet(res.RequestUrl, res, p.Config.CacheTimeout)
 			p.Lock.Unlock()
 			p.CV.Broadcast()
 		} else if message.MessageType == ELECTION_MESSAGE {
@@ -282,7 +262,7 @@ func (p *ProxyNode) HandleRequest(b []byte) {
 			if !p.Info.IsLeader {
 				http.HandleFunc("/", p.HandleHttpRequest)
 				go func() {
-					log.Fatal(http.ListenAndServe("localhost:8080", nil))
+					log.Fatal(http.ListenAndServe(p.Config.PublicUrl, nil))
 				}()
 				p.Info.IsLeader = true
 				log.Println("Current Node is now the leader!")
