@@ -1,7 +1,7 @@
 # Distrox
 
 ## What
-Distrox is a simply distributed HTTP proxy server. It currently supports caching, leader election, load balancing, and firewalls.
+Distrox is a simple distributed HTTP proxy server. It currently supports caching, leader election, load balancing, and firewalls.
 
 ## Usage
 
