@@ -279,13 +279,13 @@ func (p *ProxyNode) HandleRequest(b []byte) {
 		} else if message.MessageType == ANSWER_MESSAGE {
 
 			p.Lock.Lock()
-			if (!p.Info.IsLeader) {
+			if !p.Info.IsLeader {
 				http.HandleFunc("/", p.HandleHttpRequest)
-				go func(){
-				    log.Fatal(http.ListenAndServe("localhost:8080", nil))
+				go func() {
+					log.Fatal(http.ListenAndServe("localhost:8080", nil))
 				}()
-			    p.Info.IsLeader = true
-			    log.Println("Current Node is now the leader!")
+				p.Info.IsLeader = true
+				log.Println("Current Node is now the leader!")
 			}
 			p.Lock.Unlock()
 		} else if message.MessageType == UNICAST_MESSAGE {
@@ -389,7 +389,7 @@ func (p *ProxyNode) StartBackgroundChecker() {
 		case t := <-ticker.C:
 			p.Multicast([]byte(t.String()))
 
-			if (!p.Info.IsLeader && p.LeaderUrl != "") {
+			if !p.Info.IsLeader && p.LeaderUrl != "" {
 				conn, err := net.Dial("tcp", p.LeaderUrl)
 				if err != nil {
 					p.StartLeaderElection()
@@ -419,11 +419,11 @@ func (p *ProxyNode) ConstructVictoryMessage() Message {
 }
 
 func (p *ProxyNode) StartLeaderElection() {
-	highest:= true
+	highest := true
 
 	for _, elem := range p.PeerInfo {
 		if elem.ID > p.Info.ID {
-			highest= false
+			highest = false
 			p.Unicast(MessageToBytes(p.ConstructElectionMessage()), elem.Url)
 		}
 	}
