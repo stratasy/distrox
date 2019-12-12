@@ -23,7 +23,7 @@ type NodeInfo struct {
 }
 
 type ProxyNode struct {
-	Config		     *ProxyConfig
+	Config               *ProxyConfig
 	Info                 *NodeInfo
 	PeerInfo             []*NodeInfo
 	Messenger            *TCPMessenger
@@ -177,9 +177,9 @@ func (p *ProxyNode) HandleRequest(b []byte) {
 			tokens := strings.Split(m, ":")
 			port, _ := strconv.Atoi(tokens[1])
 			new_node_info := CreateNodeInfo(tokens[0], port, false)
-			log.Printf("New node joined with URL %s!", new_node_info.Url)
 
 			if !p.ContainsUrl(new_node_info.Url) {
+				log.Printf("%s has joined!", new_node_info.Url)
 				p.PeerInfo = append(p.PeerInfo, new_node_info)
 			}
 
@@ -201,7 +201,7 @@ func (p *ProxyNode) HandleRequest(b []byte) {
 				if !p.ContainsUrl(url) {
 					new_node_info := CreateNodeInfo(tokens[0], port, false)
 					p.PeerInfo = append(p.PeerInfo, new_node_info)
-					log.Printf("New node joined with URL %s!", new_node_info.Url)
+					log.Printf("%s has joined!", new_node_info.Url)
 				}
 			}
 
