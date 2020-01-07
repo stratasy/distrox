@@ -17,3 +17,11 @@ Example:
 
 To connect one node to another node, type:
 ``` connect [host]:[port] ``` in the console while the node is running.
+
+## Demo
+  <p align="center">
+      <img src="videos/leader_election.gif" width="700" height="394"/>
+  </p>
+  <p align="center">
+      <img src="videos/demo.gif" width="700" height="394"/>
+  </p>
