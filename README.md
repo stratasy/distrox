@@ -17,3 +17,16 @@ Example:
 
 To connect one node to another node, type:
 ``` connect [host]:[port] ``` in the console while the node is running.
+
+
+## Demo
+
+  The first gif shows nodes joining/dying + the leader election process. The second gif shows a complete demo.
+
+  <p align="center">
+    <img src="videos/leader_election.gif" width="800" height="470"/>
+  </p>
+  
+  <p align="center">
+    <img src="videos/demo.gif" width="800" height="470"/>
+  </p>
